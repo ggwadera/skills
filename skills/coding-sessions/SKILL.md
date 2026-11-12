@@ -1,16 +1,16 @@
 ---
 name: coding-sessions
-description: Inspect and continue from past Claude Code, Codex, and opencode session transcripts stored in ~/.claude/, ~/.codex/, and ~/.local/share/opencode/opencode.db. Use when the user asks to read, list, inspect, summarize, extract context from, or continue past sessions. Also use when the user mentions "claude code history", "codex history", "opencode history", "past sessions", "session transcript", or references a session ID.
+description: Inspect and continue from past Claude Code, Codex, opencode, and DeepSeek harness (dsh) session transcripts stored in ~/.claude/, ~/.codex/, ~/.local/share/opencode/opencode.db, and ~/.dsh/. Use when the user asks to read, list, inspect, summarize, extract context from, or continue past sessions. Also use when the user mentions "claude code history", "codex history", "opencode history", "deepseek history", "dsh history", "past sessions", "session transcript", or references a session ID.
 license: MIT
-compatibility: Requires Python 3.9 or newer and local session data from Claude Code, Codex, or opencode.
+compatibility: Requires Python 3.9 or newer and local session data from Claude Code, Codex, opencode, or the DeepSeek harness. Decoding zstd-compressed harness sessions requires Python 3.14+ (compression.zstd), the zstandard package, or the zstd CLI.
 metadata:
   author: ggwadera
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Coding Sessions
 
-Inspect and continue from past session transcripts from three sources:
+Inspect and continue from past session transcripts from four sources:
 
 - **Claude Code** stores one JSONL file per session under
   `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl`. Each line is a typed
@@ -28,6 +28,12 @@ Inspect and continue from past session transcripts from three sources:
     optionally `session_part`. Assistant content is stored inline in
     `session_message.data.content` by default, in `session_part` rows when
     `experimental.part_rows` is enabled, or a mix of both.
+- **DeepSeek harness (dsh)** stores one JSONL transcript per session under
+  `~/.dsh/sessions/<projectKey>/<sessionId>/session.vN.jsonl[.zstd]`
+  (overridable via the `DSH_HOME` environment variable), zstd-compressed by
+  default. Line 1 is the session header; every following line is a typed
+  event envelope with `seq`, `time`, and `data`. The current format
+  generation is v4.
 
 When a database contains both schemas (a V1 database that was migrated by an
 opencode 2.x run), the script reads both and de-duplicates sessions by ID,
@@ -37,12 +43,13 @@ Detail commands search all directories unless `--dir` is given; `list`
 defaults to `$PWD` unless `--all` or `--grep` is used.
 
 The script auto-detects which source a session ID belongs to. You can also
-filter explicitly with `--source claude`, `--source codex`, or
-`--source opencode`.
+filter explicitly with `--source claude`, `--source codex`, `--source
+opencode`, or `--source dsh`.
 
 ## When to use
 
-- User asks to list or browse past sessions (Claude Code, Codex, or opencode)
+- User asks to list or browse past sessions (Claude Code, Codex, opencode,
+  or the DeepSeek harness)
 - User wants a summary of what happened in a specific session
 - User wants to continue work from a previous session
 - User references a session ID
@@ -60,6 +67,7 @@ The script uses a plug-in interface: each source implements the
 - `sources/opencode_v2.py` — opencode V2 table adapter.
 - `sources/opencode_base.py` — shared opencode database helpers and schema
   detection.
+- `sources/dsh.py` — DeepSeek harness JSONL adapter (plain or zstd).
 
 A registry in `sources/__init__.py` maps source names to adapter instances and
 handles auto-detection. Adapters extract structured data (dataclasses); the
@@ -100,6 +108,7 @@ python3 session_extract.py list
 python3 session_extract.py list --source claude --dir /Users/me/myproject
 python3 session_extract.py list --source codex
 python3 session_extract.py list --source opencode --dir /Users/me/myproject
+python3 session_extract.py list --source dsh --all
 ```
 
 **List sessions with token, cost, and active-time columns:**
@@ -112,8 +121,8 @@ python3 session_extract.py list --stats --source opencode --dir /Users/me/myproj
 reads), `Tok out`, `Cost`, and `Active`. `Active` is the time the agent spent
 replying: per-turn model and tool time summed across turns, with idle gaps
 between user turns excluded. A dash means the value is not present in that
-source's store. Cost is reported for opencode sessions only; Codex and Claude
-Code do not persist it.
+source's store. Cost is reported for opencode sessions only; Codex, Claude
+Code, and the DeepSeek harness do not report it.
 
 **Find sessions by text (case-insensitive; searches titles and user prompts):**
 ```bash
@@ -126,6 +135,7 @@ python3 session_extract.py list --source codex --all --grep "merge conflict"
 python3 session_extract.py summary <session-id>
 python3 session_extract.py summary <session-id> --source codex
 python3 session_extract.py summary <session-id> --source opencode
+python3 session_extract.py summary <session-id> --source dsh
 python3 session_extract.py summary <session-id> --max-prompts 5
 ```
 
@@ -148,13 +158,14 @@ python3 session_extract.py compact <session-id> --source opencode
 python3 session_extract.py context <session-id>
 python3 session_extract.py context <session-id> --source codex
 python3 session_extract.py context <session-id> --source opencode
+python3 session_extract.py context <session-id> --source dsh
 ```
 
 ### Options
 
 | Flag                | Description                                                             |
 | ------------------- | ----------------------------------------------------------------------- |
-| `--source <s>`      | Filter by source: `claude`, `codex`, `opencode`, or `auto` (default: `auto`) |
+| `--source <s>`      | Filter by source: `claude`, `codex`, `opencode`, `dsh`, or `auto` (default: `auto`) |
 | `--dir <path>`      | Filter by project directory (default: `$PWD` unless `--all` is used; Codex matches the session's recorded working directory) |
 | `--all`             | List sessions from all directories (list mode only)                     |
 | `--limit <n>`       | Max sessions to list (default: 50, list mode only)                      |
@@ -170,10 +181,11 @@ python3 session_extract.py context <session-id> --source opencode
 When `--source` is `auto` (the default), the script searches for the session
 ID in opencode's SQLite database first (indexed exact-match on `ses_` prefixed
 IDs), then in Claude Code's `~/.claude/projects/`, then in Codex's
-`~/.codex/sessions/` and `~/.codex/archived_sessions/`. The first match wins.
+`~/.codex/sessions/` and `~/.codex/archived_sessions/`, and finally in the
+DeepSeek harness's `~/.dsh/sessions/`. The first match wins.
 Sources that cannot be read (for example a missing database) are skipped. For
-the `list` command, `auto` lists sessions from all three sources with a
-`Source` column indicating `claude`, `codex`, or `opencode`.
+the `list` command, `auto` lists sessions from all four sources with a
+`Source` column indicating `claude`, `codex`, `opencode`, or `dsh`.
 
 ## opencode-specific notes
 
@@ -239,13 +251,53 @@ the `list` command, `auto` lists sessions from all three sources with a
 - Compaction boundaries come from `system` events with subtype
   `compact_boundary`; token counts are included when present.
 
+## DeepSeek harness-specific notes
+
+- Home is `~/.dsh` (overridable via `DSH_HOME`). Each session is a directory
+  `sessions/<projectKey>/<sessionId>/` holding `session.vN.jsonl[.zstd]`; the
+  newest generation in the directory is read, older generations are kept by
+  the harness and ignored here (v0–v3 parse best-effort when they are the
+  newest). `.lock` and `*.tmp` files are skipped.
+- zstd decoding falls back through stdlib `compression.zstd` (Python 3.14+),
+  the `zstandard` package, then the `zstd` CLI. Plain `.jsonl` files
+  (`compression: none`) always work. A missing backend surfaces as a
+  `dsh source unavailable` warning on `list`.
+- Real user prompts are `user/message` events with `source.kind == "user"`.
+  Injected context (`hook`, `parent`, `runtime-context`, `skill-catalog`,
+  `time-context`, `disposed` sources, plus `system/message` and
+  `developer/message` events) is excluded, matching the harness's own
+  Markdown export.
+- Surface edits honor `surfaceOp: {op: "replace"}`: an edited user message
+  or a refreshed `tool/result` supersedes the earlier version (the edit
+  keeps its original position). Compaction checkpoints replace the compacted
+  range with a `compact-checkpoint` message but do **not** erase transcript
+  history, so pre-compaction prompts and assistant messages still appear.
+- Model comes from the latest `request/context` (falling back to
+  `request/header`); `agentPreset` is reported as the agent. Tokens sum
+  `assistant/message` usage (input + cache read/write = prompt tokens).
+  Active time sums `turn/start`–`turn/end` spans, so idle gaps between user
+  turns are excluded. Cost is not derived (shown as a dash).
+- Compaction boundaries pair `compaction/start|summary|end` by
+  `compactionId` (trigger is `command` when a `sourceCommandId` is present,
+  else `auto`; pre/post/dropped tokens come from the summary's usage and
+  `shadowedTokenCount`). Model-free `compaction/prune` bursts outside any
+  compaction are aggregated into a single `prune` boundary. Summary text is
+  surfaced as the away summary and used by `context`.
+- Todos come from the last `todo/write` (priority is not stored, so it is
+  blank). Subagents come from `subagent/catalog` entries plus a header scan
+  for child sessions (`parentSession` with `origin: "subagent"` or
+  `delegationDepth > 0`); forked/resumed sessions that merely carry
+  `parentSession` are listed as regular sessions, not subagents.
+- Seeded forks inherit earlier events, so the first event can predate the
+  header's `createdAt`; the summary reports the earliest event time.
+
 ## Workflow
 
 ### Step 1: List sessions
 
 Start with `list` to see what is available. Key columns:
 
-- **Source**: `claude`, `codex`, or `opencode`
+- **Source**: `claude`, `codex`, `opencode`, or `dsh`
 - **Lines**: total JSONL events (Claude Code, Codex) or message count (opencode) — a rough complexity indicator
 - **Prompts**: number of real user prompts
 - **Tools**: number of tool calls made by the assistant
@@ -265,6 +317,7 @@ For a quick overview, use `summary <session-id>`. This shows:
 - Claude Code: compaction boundaries, away summaries, files edited
 - Codex: reasoning summaries, compaction summaries, subagents
 - opencode: reasoning summaries, todos, subagent sessions, compaction summaries, cost/tokens
+- DeepSeek harness: reasoning summaries, todos, subagents, compaction summaries, tokens
 
 ### Step 3: Full timeline (if needed)
 
@@ -276,6 +329,7 @@ Use `timeline <session-id>` for the complete conversation including:
 - Claude Code: compact boundaries, away summaries, slash commands
 - Codex: reasoning summaries (encrypted content is skipped), token counts
 - opencode: reasoning summaries, file edits, compaction events
+- DeepSeek harness: reasoning, tool results, compaction/prune events, turn durations, working-directory changes
 
 This is verbose — prefer `summary` first and only use `timeline` when you
 need to see the actual assistant reasoning or tool call details. Use
@@ -309,3 +363,8 @@ assume the user wants to continue — ask first.
 - **opencode**: subagent sessions are stored as child rows in the session
   table (linked via `parent_id`). The `summary` command lists them; use
   `timeline` or `summary` with the child session ID to inspect them.
+- **DeepSeek harness**: subagent children are separate session directories
+  whose header carries `parentSession` with `origin: "subagent"` (or a
+  positive `delegationDepth`); the parent's `subagent/catalog` events give
+  each child's name, mode, and label. The `summary` command lists them;
+  use `timeline` or `summary` with the child session ID to inspect them.

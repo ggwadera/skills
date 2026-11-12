@@ -13,6 +13,7 @@ from typing import Any
 from .base import SessionSource
 from .claude import ClaudeSource
 from .codex import CodexSource
+from .dsh import DshSource
 from .opencode import OpencodeSource
 
 #: Maps --source value to adapter instance
@@ -20,10 +21,11 @@ SOURCES: dict[str, SessionSource] = {
     "claude": ClaudeSource(),
     "codex": CodexSource(),
     "opencode": OpencodeSource(),
+    "dsh": DshSource(),
 }
 
 #: Precedence order for auto-detection (opencode first: ses_ prefix is indexed)
-AUTO_DETECT_ORDER: list[str] = ["opencode", "claude", "codex"]
+AUTO_DETECT_ORDER: list[str] = ["opencode", "claude", "codex", "dsh"]
 
 
 def get_source(name: str) -> SessionSource:

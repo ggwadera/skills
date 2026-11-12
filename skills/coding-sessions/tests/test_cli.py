@@ -13,6 +13,7 @@ from session_fixtures import (
     TempDirTestCase,
     build_claude_fixture,
     build_codex_fixture,
+    build_dsh_fixture,
     build_opencode_fixture,
     write_jsonl,
 )
@@ -33,6 +34,7 @@ class CliTestCase(TempDirTestCase):
             "CLAUDE_DIR": str(self.claude_dir),
             "CODEX_DIR": str(self.codex_dir),
             "OPENCODE_DB": str(self.db_path),
+            "DSH_HOME": str(self.root / "empty-dsh"),
         })
 
     def run_cli(self, *args):
@@ -192,6 +194,97 @@ class CliTestCase(TempDirTestCase):
         self.assertIn("No sessions found (some sources were unavailable).",
                       result.stdout)
         self.assertIn("opencode source unavailable", result.stderr)
+
+
+class CliDshTestCase(TempDirTestCase):
+    """CLI coverage for the DeepSeek harness source (isolated env)."""
+
+    def setUp(self):
+        super().setUp()
+        self.dsh_home = self.root / "dsh"
+        self.dsh_id = build_dsh_fixture(self.dsh_home)
+        self.env = dict(os.environ)
+        self.env.update({
+            "CLAUDE_DIR": str(self.root / "empty-claude"),
+            "CODEX_DIR": str(self.root / "empty-codex"),
+            "OPENCODE_DB": str(self.root / "empty-opencode.db"),
+            "DSH_HOME": str(self.dsh_home),
+        })
+
+    def run_cli(self, *args):
+        return subprocess.run(
+            [sys.executable, str(SKILL_ROOT / "session_extract.py"), *args],
+            capture_output=True, text=True, env=self.env,
+            cwd=str(SKILL_ROOT),
+        )
+
+    def test_list_source_filter(self):
+        result = self.run_cli("list", "--source", "dsh", "--all")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(self.dsh_id, result.stdout)
+        self.assertIn("Fix flaky test", result.stdout)
+        self.assertIn("Total: 1 session(s)", result.stdout)
+
+    def test_list_autodetect_includes_dsh(self):
+        result = self.run_cli("list", "--all")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(self.dsh_id, result.stdout)
+
+    def test_list_stats_columns(self):
+        result = self.run_cli("list", "--stats", "--source", "dsh", "--all")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("9,096", result.stdout)
+        self.assertIn("765", result.stdout)
+        self.assertIn("4s", result.stdout)
+
+    def test_list_grep_matches_edited_prompt(self):
+        result = self.run_cli("list", "--grep", "backoff")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn(self.dsh_id, result.stdout)
+        self.assertIn("Total: 1 session(s)", result.stdout)
+
+    def test_list_no_sessions_message(self):
+        self.env["DSH_HOME"] = str(self.root / "missing-dsh")
+        result = self.run_cli("list", "--source", "dsh", "--all")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("No DeepSeek harness sessions found.", result.stdout)
+
+    def test_summary_autodetected(self):
+        result = self.run_cli("summary", self.dsh_id)
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Source:       dsh", result.stdout)
+        self.assertIn("Fix flaky test", result.stdout)
+        self.assertIn("deepseek-flash", result.stdout)
+        self.assertIn("9,096 in / 765 out", result.stdout)
+        self.assertIn("--- Compaction Boundaries ---", result.stdout)
+        self.assertIn("Recap of earlier work", result.stdout)
+        self.assertIn("--- Todos ---", result.stdout)
+
+    def test_timeline(self):
+        result = self.run_cli("timeline", self.dsh_id, "--source", "dsh")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("USER:", result.stdout)
+        self.assertIn("Fix the flaky test", result.stdout)
+        self.assertIn("TOOL_CALL(bash)", result.stdout)
+        self.assertIn("COMPACT_BOUNDARY", result.stdout)
+        self.assertIn("AWAY_SUMMARY", result.stdout)
+
+    def test_compact(self):
+        result = self.run_cli("compact", self.dsh_id, "--source", "dsh")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("Trigger:    auto", result.stdout)
+        self.assertIn("Pre tokens: 1,000", result.stdout)
+        self.assertIn("Dropped:    500", result.stdout)
+        self.assertIn("Recap of earlier work", result.stdout)
+
+    def test_context_recap_and_label(self):
+        result = self.run_cli("context", self.dsh_id, "--source", "dsh")
+        self.assertEqual(result.returncode, 0)
+        self.assertIn("=== CONTINUATION CONTEXT ===", result.stdout)
+        self.assertIn("--- Auto-generated Recap (from away_summary) ---",
+                      result.stdout)
+        self.assertIn("Recap of earlier work", result.stdout)
+        self.assertIn("previous DeepSeek harness session", result.stdout)
 
 
 if __name__ == "__main__":

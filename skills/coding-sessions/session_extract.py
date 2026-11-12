@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract and inspect session transcripts from Claude Code, Codex, and opencode.
+"""Extract and inspect session transcripts from Claude Code, Codex, opencode, and the DeepSeek harness.
 
 Claude Code stores session transcripts as JSONL files under
 ~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl.
@@ -10,6 +10,11 @@ and ~/.codex/archived_sessions/rollout-<timestamp>-<session-id>.jsonl (archived)
 
 opencode stores sessions in a SQLite database at
 ~/.local/share/opencode/opencode.db (overridable via OPENCODE_DB).
+
+The DeepSeek harness (dsh) stores session transcripts as JSONL under
+~/.dsh/sessions/<projectKey>/<sessionId>/session.vN.jsonl[.zstd]
+(overridable via DSH_HOME); zstd-compressed files need Python 3.14+
+(compression.zstd), the zstandard package, or the zstd CLI.
 
 This script provides:
   list            List sessions for a given directory or from all sources
@@ -24,6 +29,7 @@ Usage:
   python3 session_extract.py list --dir /Users/me/myproject
   python3 session_extract.py list --source codex
   python3 session_extract.py summary <session-id> --source opencode
+  python3 session_extract.py summary <session-id> --source dsh
   python3 session_extract.py timeline <session-id> --dir /Users/me/myproject
   python3 session_extract.py compact <session-id> --dir /Users/me/myproject
   python3 session_extract.py context <session-id> --source codex
@@ -147,11 +153,13 @@ def format_list(args) -> int:
         elif source == "claude":
             d = dir_path or os.getcwd()
             print(f"No Claude Code sessions found for directory: {d}")
-            print("  Use --all to list from all directories, or --source codex/opencode")
+            print("  Use --all to list from all directories, or --source codex/opencode/dsh")
         elif source == "codex":
             print("No Codex sessions found.")
         elif source == "opencode":
             print("No opencode sessions found in the database.")
+        elif source == "dsh":
+            print("No DeepSeek harness sessions found.")
         else:
             print("No sessions found from any source.")
         return 0
@@ -515,7 +523,8 @@ def format_context(args) -> int:
     print("Example continuation prompt:")
     print()
     last_prompt = prompts[-1].text[:200] if prompts else ""
-    source_label = adapter.name.capitalize()
+    source_label = ("DeepSeek harness" if adapter.name == "dsh"
+                    else adapter.name.capitalize())
     print(f"  \"I'm continuing work from a previous {source_label} session about '{meta.title or 'this topic'}'.")
     print(f"   The last thing I asked was: {last_prompt}...")
     print("   Here's the context: [paste above]\"")
@@ -527,7 +536,7 @@ def format_context(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Inspect Claude Code, Codex, and opencode session transcripts",
+        description="Inspect Claude Code, Codex, opencode, and DeepSeek harness session transcripts",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -537,7 +546,7 @@ def main() -> int:
     p_list = sub.add_parser("list", help="List sessions")
     p_list.add_argument("--dir", help="Filter by this directory (default: $PWD)")
     p_list.add_argument("--all", action="store_true", help="List sessions from all directories")
-    p_list.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
+    p_list.add_argument("--source", choices=["auto", "claude", "codex", "opencode", "dsh"], default="auto", help="Filter by source (default: auto)")
     p_list.add_argument("--limit", type=int, default=50, help="Max sessions to list (default: 50)")
     p_list.add_argument("--grep", help="Only show sessions whose title or user prompts contain this text")
     p_list.add_argument("--stats", action="store_true", help="Add token, cost, and active-time columns")
@@ -546,14 +555,14 @@ def main() -> int:
     p_sum = sub.add_parser("summary", help="One-page summary of a session")
     p_sum.add_argument("session", help="Session ID")
     p_sum.add_argument("--dir", help="Project directory (default: $PWD)")
-    p_sum.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
+    p_sum.add_argument("--source", choices=["auto", "claude", "codex", "opencode", "dsh"], default="auto", help="Filter by source (default: auto)")
     p_sum.add_argument("--max-prompts", type=int, default=None, help="Show only the last N user prompts")
 
     # timeline
     p_tl = sub.add_parser("timeline", help="Full conversation timeline")
     p_tl.add_argument("session", help="Session ID")
     p_tl.add_argument("--dir", help="Project directory (default: $PWD)")
-    p_tl.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
+    p_tl.add_argument("--source", choices=["auto", "claude", "codex", "opencode", "dsh"], default="auto", help="Filter by source (default: auto)")
     p_tl.add_argument("--since", help="Only show events at or after this ISO timestamp")
     p_tl.add_argument("--until", help="Only show events at or before this ISO timestamp")
     p_tl.add_argument("--tail", type=int, default=None, help="Show only the last N events")
@@ -562,13 +571,13 @@ def main() -> int:
     p_comp = sub.add_parser("compact", help="Extract compaction boundaries")
     p_comp.add_argument("session", help="Session ID")
     p_comp.add_argument("--dir", help="Project directory (default: $PWD)")
-    p_comp.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
+    p_comp.add_argument("--source", choices=["auto", "claude", "codex", "opencode", "dsh"], default="auto", help="Filter by source (default: auto)")
 
     # context
     p_ctx = sub.add_parser("context", help="Build continuation prompt from latest state")
     p_ctx.add_argument("session", help="Session ID")
     p_ctx.add_argument("--dir", help="Project directory (default: $PWD)")
-    p_ctx.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
+    p_ctx.add_argument("--source", choices=["auto", "claude", "codex", "opencode", "dsh"], default="auto", help="Filter by source (default: auto)")
 
     args = parser.parse_args()
 

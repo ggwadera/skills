@@ -2,8 +2,8 @@
 
 [![skills.sh](https://skills.sh/b/ggwadera/skills)](https://skills.sh/ggwadera/skills)
 
-Inspect and continue from past **Claude Code**, **Codex**, and **opencode**
-session transcripts.
+Inspect and continue from past **Claude Code**, **Codex**, **opencode**, and
+**DeepSeek harness** (dsh) session transcripts.
 
 The tool reads the native session stores of each coding agent and renders
 them in a common format: session lists, one-page summaries, full timelines,
@@ -12,13 +12,14 @@ session.
 
 ## Features
 
-- **One CLI, three sources.** Auto-detects which agent produced a session ID.
+- **One CLI, four sources.** Auto-detects which agent produced a session ID.
 - **Session discovery.** List sessions per directory or across all
   directories, with prompt and tool-call counts.
 - **Session stats.** `--stats` adds prompt and completion tokens, cost, and
   active reply time. Active time sums per-turn model and tool work, so idle
   gaps between user turns do not inflate it. Cost is reported for opencode
-  sessions only; Codex and Claude Code do not persist it.
+  sessions only; Codex, Claude Code, and the DeepSeek harness do not report
+  it.
 - **Text search.** Find sessions by ticket ID, feature name, or any text from
   a user prompt (`--grep` scans all sessions, not only the first page).
 - **Summaries.** Metadata, model, timestamps, cost, tokens, user prompts,
@@ -31,17 +32,23 @@ session.
 - **Both opencode schemas.** Reads opencode V1 (`session`, `message`, `part`)
   and V2 (`session_v2`, `session_message`, plus `session_part` when the table
   exists), including databases migrated from V1 to V2.
+- **DeepSeek harness transcripts.** Reads plain and zstd-compressed
+  `session.vN.jsonl` files, honors surface edits and compaction checkpoints,
+  and keeps pre-compaction history.
 
 ## Requirements
 
 - Python 3.9 or newer.
 - No third-party packages.
 - macOS or Linux. The default paths follow the tools' own conventions.
+- Decoding zstd-compressed DeepSeek harness sessions (the default encoding)
+  uses Python 3.14+ (`compression.zstd`), the `zstandard` package, or the
+  `zstd` CLI, whichever is available first.
 
 ## Tests
 
-The suite builds synthetic Claude Code, Codex, and opencode data in a temporary
-directory and never reads real session files.
+The suite builds synthetic Claude Code, Codex, opencode, and DeepSeek harness
+data in a temporary directory and never reads real session files.
 
 ```bash
 cd skills/coding-sessions
@@ -112,6 +119,7 @@ python3 session_extract.py list --stats --all --limit 20
 # List sessions for one source and directory
 python3 session_extract.py list --source opencode --dir /Users/me/myproject
 python3 session_extract.py list --source claude --all
+python3 session_extract.py list --source dsh --all
 
 # Find sessions by ticket or prompt text
 python3 session_extract.py list --grep ABC-1234
@@ -141,12 +149,14 @@ Run `python3 session_extract.py --help` for all commands and options.
 | Claude Code | `~/.claude/projects/<encoded-cwd>/<sessionId>.jsonl` | Session JSONL; away summaries; compaction boundaries; subagent metadata |
 | Codex       | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | Rollout JSONL, both legacy and paginated histories; `compacted` items; `world_state` subagents; `session_index.jsonl` titles |
 | opencode    | `~/.local/share/opencode/opencode.db` | V1 and V2 SQLite schemas; inline and split assistant content |
+| DeepSeek harness | `~/.dsh/sessions/<projectKey>/<sessionId>/session.vN.jsonl[.zstd]` | Header + typed event JSONL (v4 current, older generations best-effort); zstd or plain; `session/title`, `compaction/*`, `todo/write`, `subagent/catalog` |
 
 Environment overrides:
 
 - `CLAUDE_DIR` — root of the Claude Code data directory.
 - `CODEX_DIR` — root of the Codex data directory.
 - `OPENCODE_DB` — path to the opencode database file.
+- `DSH_HOME` — root of the DeepSeek harness home (default `~/.dsh`).
 
 ## Notes and limitations
 
@@ -171,6 +181,14 @@ Environment overrides:
   non-alphanumeric characters with `-`.
 - Claude Code files edited are derived from edit tool calls in the transcript,
   not from the file-history directory.
+- DeepSeek harness sessions read the newest `session.vN.jsonl[.zstd]`
+  generation per directory; `.lock` and `*.tmp` files are skipped, and
+  migrated older generations are left alone.
+- DeepSeek harness compaction checkpoints replace the compacted range on the
+  live surface but do not erase transcript history, so pre-compaction prompts
+  and assistant messages still appear in summaries and timelines.
+- DeepSeek harness forked/resumed sessions that carry `parentSession` without
+  `origin: "subagent"` are listed as regular sessions, not subagents.
 
 ## Exit status
 
