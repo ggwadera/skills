@@ -187,109 +187,19 @@ Sources that cannot be read (for example a missing database) are skipped. For
 the `list` command, `auto` lists sessions from all four sources with a
 `Source` column indicating `claude`, `codex`, `opencode`, or `dsh`.
 
-## opencode-specific notes
+## Source-specific notes
 
-- The `OPENCODE_DB` environment variable overrides the default database path
-  (`~/.local/share/opencode/opencode.db`).
-- `--dir` filters by the session directory column (exact match).
-- V1 and V2 schemas are detected per database. A migrated database contains
-  both; sessions that exist in both are de-duplicated by newest
-  `time_updated`, and sessions that exist only in V2 are still listed.
-- Synthetic text parts are excluded, so prompt counts reflect real user
-  prompts. In V1 this filters `synthetic` and `ignored` text parts; in V2 the
-  message type itself distinguishes `user` from `synthetic`, `system`, and
-  `skill` messages.
-- Compaction summaries are surfaced as away summaries: V1 reads assistant
-  messages flagged `summary: true`; V2 reads `compaction` messages and their
-  `summary` field. `context` uses the latest summary as the recap.
-- V2 normally includes `session_part` (created by migrations); when the
-  table is absent, assistant content is read inline. Content may be inline,
-  split across both, or a mix.
-- `todo` rows exist only in V1. Migrated databases keep them, so todos appear
-  for any session with V1 todo rows; V2-only sessions have none.
-- Subagent sessions are detected via the `parent_id` column in both schemas.
+Format details, provenance rules, and edge cases for each harness live in
+`references/` — read the file for the source you are working with:
 
-## Codex-specific notes
-
-- Rollout files use one JSON line per item. Real user prompts are recovered
-  from `event_msg` items whose payload is `item_completed` with an item type of
-  `UserMessage`; this works for both legacy and current (paginated) histories.
-  Response items carrying `internal_chat_message_metadata_passthrough`
-  provenance are used as a fallback, and legacy `event_msg/user_message`
-  payloads as the last fallback.
-- Injected context fragments (`<environment_context>`, `# AGENTS.md
-  instructions`, `<skills_instructions>`, notifications, plugin lists) are
-  excluded by marker, so they never appear as user prompts.
-- Tool calls cover `custom_tool_call`, `function_call`, `local_shell_call`,
-  `web_search_call`, and `tool_search_call`, with outputs joined from their
-  result items. Namespaced function calls are rendered as `<namespace>.<name>`.
-- Compaction is read from `compacted` items. The preserved summary text, when
-  present, is surfaced as an away summary and used by `context`. Encrypted
-  `response_item/compaction` mirrors are shown only when no `compacted` item
-  exists.
-- The model comes from the latest `turn_context`; `session_meta` contributes
-  CWD, CLI version, source, and git branch.
-- Subagents are read from `world_state`; both the legacy `- <id>: <nickname>`
-  format and the current `<agent name="..."/>` format are supported.
-- Reverted sessions leave several rollout files that share a thread ID. The
-  newest file is used and duplicate rows are collapsed by session ID.
-- `session_index.jsonl` supplies titles only; archived rollouts are found by
-  scanning `archived_sessions/` directly.
-- Sessions are identified by the thread UUID in the rollout filename. When
-  several files share a thread (reverted rollouts), the newest file by
-  modification time is used. Checkpoint files of one conversation (shared
-  payload session ID) collapse to the most complete rollout; side transcripts
-  with their own indexed title (for example review tasks) stay separate.
-
-## Claude Code-specific notes
-
-- Project directories encode the CWD by replacing every non-alphanumeric
-  character with `-`.
-- Files edited are derived from `Edit`, `Write`, `NotebookEdit`, and `MultiEdit`
-  tool calls in the transcript (`file_path`, falling back to `notebook_path`).
-- Away summaries come from `system` events with subtype `away_summary`.
-- Compaction boundaries come from `system` events with subtype
-  `compact_boundary`; token counts are included when present.
-
-## DeepSeek harness-specific notes
-
-- Home is `~/.dsh` (overridable via `DSH_HOME`). Each session is a directory
-  `sessions/<projectKey>/<sessionId>/` holding `session.vN.jsonl[.zstd]`; the
-  newest generation in the directory is read, older generations are kept by
-  the harness and ignored here (v0–v3 parse best-effort when they are the
-  newest). `.lock` and `*.tmp` files are skipped.
-- zstd decoding falls back through stdlib `compression.zstd` (Python 3.14+),
-  the `zstandard` package, then the `zstd` CLI. Plain `.jsonl` files
-  (`compression: none`) always work. A missing backend surfaces as a
-  `dsh source unavailable` warning on `list`.
-- Real user prompts are `user/message` events with `source.kind == "user"`.
-  Injected context (`hook`, `parent`, `runtime-context`, `skill-catalog`,
-  `time-context`, `disposed` sources, plus `system/message` and
-  `developer/message` events) is excluded, matching the harness's own
-  Markdown export.
-- Surface edits honor `surfaceOp: {op: "replace"}`: an edited user message
-  or a refreshed `tool/result` supersedes the earlier version (the edit
-  keeps its original position). Compaction checkpoints replace the compacted
-  range with a `compact-checkpoint` message but do **not** erase transcript
-  history, so pre-compaction prompts and assistant messages still appear.
-- Model comes from the latest `request/context` (falling back to
-  `request/header`); `agentPreset` is reported as the agent. Tokens sum
-  `assistant/message` usage (input + cache read/write = prompt tokens).
-  Active time sums `turn/start`–`turn/end` spans, so idle gaps between user
-  turns are excluded. Cost is not derived (shown as a dash).
-- Compaction boundaries pair `compaction/start|summary|end` by
-  `compactionId` (trigger is `command` when a `sourceCommandId` is present,
-  else `auto`; pre/post/dropped tokens come from the summary's usage and
-  `shadowedTokenCount`). Model-free `compaction/prune` bursts outside any
-  compaction are aggregated into a single `prune` boundary. Summary text is
-  surfaced as the away summary and used by `context`.
-- Todos come from the last `todo/write` (priority is not stored, so it is
-  blank). Subagents come from `subagent/catalog` entries plus a header scan
-  for child sessions (`parentSession` with `origin: "subagent"` or
-  `delegationDepth > 0`); forked/resumed sessions that merely carry
-  `parentSession` are listed as regular sessions, not subagents.
-- Seeded forks inherit earlier events, so the first event can predate the
-  header's `createdAt`; the summary reports the earliest event time.
+- `references/claude-code.md` — project encoding, files edited, away
+  summaries, compaction boundaries.
+- `references/codex.md` — rollout items, prompt provenance, tool calls,
+  compaction, reverted sessions.
+- `references/opencode.md` — V1/V2 schemas, synthetic parts, compaction
+  summaries, todos, subagents.
+- `references/deepseek-harness.md` — generation files, zstd decoding, surface
+  edits, compaction, todos, subagents, seeded forks.
 
 ## Workflow
 
