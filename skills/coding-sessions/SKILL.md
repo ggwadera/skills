@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires Python 3.9 or newer and local session data from Claude Code, Codex, or opencode.
 metadata:
   author: ggwadera
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Coding Sessions
@@ -102,6 +102,19 @@ python3 session_extract.py list --source codex
 python3 session_extract.py list --source opencode --dir /Users/me/myproject
 ```
 
+**List sessions with token, cost, and active-time columns:**
+```bash
+python3 session_extract.py list --stats --all --limit 20
+python3 session_extract.py list --stats --source opencode --dir /Users/me/myproject
+```
+
+`--stats` adds four columns: `Tok in` (all prompt tokens, including cache
+reads), `Tok out`, `Cost`, and `Active`. `Active` is the time the agent spent
+replying: per-turn model and tool time summed across turns, with idle gaps
+between user turns excluded. A dash means the value is not present in that
+source's store. Cost is reported for opencode sessions only; Codex and Claude
+Code do not persist it.
+
 **Find sessions by text (case-insensitive; searches titles and user prompts):**
 ```bash
 python3 session_extract.py list --grep ABC-1234
@@ -146,6 +159,7 @@ python3 session_extract.py context <session-id> --source opencode
 | `--all`             | List sessions from all directories (list mode only)                     |
 | `--limit <n>`       | Max sessions to list (default: 50, list mode only)                      |
 | `--grep <text>`     | Only show sessions whose title or user prompts contain the text; scans all sessions (list mode only) |
+| `--stats`           | Add `Tok in`, `Tok out`, `Cost`, and `Active` columns (list mode only)  |
 | `--max-prompts <n>` | Show only the last N user prompts (summary mode only)                   |
 | `--since <iso>`     | Only show events at or after this timestamp (timeline mode only)        |
 | `--until <iso>`     | Only show events at or before this timestamp (timeline mode only)       |
@@ -236,6 +250,9 @@ Start with `list` to see what is available. Key columns:
 - **Prompts**: number of real user prompts
 - **Tools**: number of tool calls made by the assistant
 - **Cmp**: number of compaction boundaries
+- **Tok in / Tok out**: prompt and completion tokens summed for the session (`--stats` only)
+- **Cost**: session cost; opencode only (`--stats` only)
+- **Active**: agent reply time with idle gaps excluded (`--stats` only)
 
 Use `--grep` to find sessions by ticket ID, feature name, or any text that
 appeared in a user prompt.

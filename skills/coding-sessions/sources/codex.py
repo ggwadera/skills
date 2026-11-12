@@ -344,6 +344,45 @@ def _tool_call_payload(payload: dict) -> dict | None:
     return None
 
 
+def _usage_from_lines(lines: list[dict]) -> tuple[int, int, int]:
+    """Return (input_tokens, output_tokens, active_ms) for a rollout.
+
+    Tokens prefer the newest ``thread_token_usage`` record (exact provider
+    accounting); ``event_msg/token_count`` totals are the fallback because a
+    post-compaction count can be a context-window estimate. Active time is the
+    sum of completed and aborted turn durations, which excludes idle gaps
+    between user turns.
+    """
+    tokens_input = 0
+    tokens_output = 0
+    active_ms = 0
+    total_usage: dict | None = None
+    for obj in lines:
+        obj_type = obj.get("type", "")
+        payload = obj.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if obj_type == "token_usage_record":
+            thread = payload.get("thread_token_usage")
+            if isinstance(thread, dict):
+                total_usage = thread
+        elif obj_type == "event_msg":
+            ev_type = payload.get("type", "")
+            if ev_type == "token_count":
+                info = payload.get("info")
+                total = info.get("total_token_usage") if isinstance(info, dict) else None
+                if isinstance(total, dict):
+                    total_usage = total
+            elif ev_type in ("task_complete", "turn_aborted"):
+                duration = payload.get("duration_ms") or 0
+                if isinstance(duration, (int, float)) and duration > 0:
+                    active_ms += int(duration)
+    if total_usage:
+        tokens_input = total_usage.get("input_tokens") or 0
+        tokens_output = total_usage.get("output_tokens") or 0
+    return tokens_input, tokens_output, active_ms
+
+
 class CodexSource(SessionSource):
     name = "codex"
 
@@ -378,6 +417,9 @@ class CodexSource(SessionSource):
                 compacts=len(self._compacted_from_lines(lines)),
                 last_ts=meta.last_ts,
                 file_size=size,
+                tokens_input=meta.tokens_input,
+                tokens_output=meta.tokens_output,
+                duration_s=meta.duration_s,
             )
             if meta.is_subagent:
                 key = f"{meta.session_id}|{meta.nickname or thread_id}"
@@ -459,6 +501,7 @@ class CodexSource(SessionSource):
                         break
         if not title and is_subagent:
             title = f"subagent {nickname}".strip()
+        tokens_input, tokens_output, active_ms = _usage_from_lines(lines)
         return SessionMeta(
             source="codex",
             session_id=session_id or f.stem,
@@ -472,6 +515,9 @@ class CodexSource(SessionSource):
             last_ts=last_ts,
             compact_count=len(self._compacted_from_lines(lines)),
             file_size=f.stat().st_size if f.is_file() else 0,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            duration_s=active_ms // 1000,
             source_label=source,
             is_subagent=is_subagent,
             nickname=nickname,

@@ -77,6 +77,24 @@ def _default_dir(args):
     return dir_path
 
 
+def _fmt_tokens(count: int) -> str:
+    return f"{count:,}" if count else "-"
+
+
+def _fmt_cost(cost: float) -> str:
+    return f"{cost:.4f}" if cost else "-"
+
+
+def _fmt_duration(seconds: int) -> str:
+    if not seconds:
+        return "-"
+    if seconds >= 3600:
+        return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+    if seconds >= 60:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds}s"
+
+
 # ---------------------------------------------------------------------------
 # Shared formatters
 # ---------------------------------------------------------------------------
@@ -143,14 +161,28 @@ def format_list(args) -> int:
     if limit is not None and len(rows) > limit:
         rows = rows[:limit]
 
-    print(f"{'Source':<10} {'Session ID':<42} {'Title':<40} {'Lines':>6} {'Prompts':>8} {'Tools':>6} {'Cmp':>4} {'Last Active':<23}")
-    print("-" * 146)
+    stats = getattr(args, "stats", False)
+    header = (f"{'Source':<10} {'Session ID':<42} {'Title':<40} {'Lines':>6} "
+              f"{'Prompts':>8} {'Tools':>6} {'Cmp':>4} {'Last Active':<23}")
+    if stats:
+        header += f" {'Tok in':>10} {'Tok out':>9} {'Cost':>9} {'Active':>8}"
+    print(header)
+    print("-" * len(header))
     for r in rows:
         title = _truncate(r.title, 33) if len(r.title) > 40 else r.title
         ts = parse_timestamp(r.last_ts)
-        print(f"{r.source:<10} {r.session_id:<42} {title:<40} {r.lines:>6} {r.user_prompts:>8} {r.tool_calls:>6} {r.compacts:>4} {ts:<23}")
+        line = (f"{r.source:<10} {r.session_id:<42} {title:<40} {r.lines:>6} "
+                f"{r.user_prompts:>8} {r.tool_calls:>6} {r.compacts:>4} {ts:<23}")
+        if stats:
+            line += (f" {_fmt_tokens(r.tokens_input):>10} "
+                     f"{_fmt_tokens(r.tokens_output):>9} "
+                     f"{_fmt_cost(r.cost):>9} {_fmt_duration(r.duration_s):>8}")
+        print(line)
 
     print(f"\nTotal: {len(rows)} session(s)")
+    if stats:
+        print("Active = time the agent spent replying (idle gaps excluded). "
+              "Cost is available for opencode sessions only.")
     return 0
 
 
@@ -508,6 +540,7 @@ def main() -> int:
     p_list.add_argument("--source", choices=["auto", "claude", "codex", "opencode"], default="auto", help="Filter by source (default: auto)")
     p_list.add_argument("--limit", type=int, default=50, help="Max sessions to list (default: 50)")
     p_list.add_argument("--grep", help="Only show sessions whose title or user prompts contain this text")
+    p_list.add_argument("--stats", action="store_true", help="Add token, cost, and active-time columns")
 
     # summary
     p_sum = sub.add_parser("summary", help="One-page summary of a session")

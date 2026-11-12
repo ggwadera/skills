@@ -25,7 +25,7 @@ from .base import (
     TodoEntry,
     ToolCall,
 )
-from .opencode_base import connect, decode_json, ms_to_iso
+from .opencode_base import connect, decode_json, ms_to_iso, stat_columns_sql
 
 _LIST_SQL = """
 SELECT id, title, directory,
@@ -36,6 +36,16 @@ SELECT id, title, directory,
           AND json_extract(p.data, '$.type') = 'text') AS text_parts,
        (SELECT count(*) FROM part p WHERE p.session_id = s.id
           AND json_extract(p.data, '$.type') = 'compaction') AS compacts,
+       {stats},
+       (SELECT coalesce(sum(
+            json_extract(m.data, '$.time.completed') -
+            json_extract(m.data, '$.time.created')), 0)
+          FROM message m
+         WHERE m.session_id = s.id
+           AND json_extract(m.data, '$.role') = 'assistant'
+           AND json_extract(m.data, '$.time.completed') IS NOT NULL
+           AND json_extract(m.data, '$.time.completed') >=
+               json_extract(m.data, '$.time.created')) AS active_ms,
        time_created, time_updated
 FROM session s
 {where}
@@ -80,11 +90,15 @@ class OpencodeV1Source(SessionSource):
                       limit: int = 200) -> list[SessionRow]:
         conn = connect()
         try:
+            stats = stat_columns_sql(conn, "session")
             if all_dirs or not dir_path:
-                rows = conn.execute(_LIST_SQL.format(where=""), (limit,)).fetchall()
+                rows = conn.execute(
+                    _LIST_SQL.format(where="", stats=stats), (limit,)
+                ).fetchall()
             else:
                 rows = conn.execute(
-                    _LIST_SQL.format(where="WHERE s.directory = ?"), (dir_path, limit)
+                    _LIST_SQL.format(where="WHERE s.directory = ?", stats=stats),
+                    (dir_path, limit),
                 ).fetchall()
             result: list[SessionRow] = []
             for r in rows:
@@ -100,6 +114,10 @@ class OpencodeV1Source(SessionSource):
                     compacts=r["compacts"] or 0,
                     last_ts=ms_to_iso(r["time_updated"] or r["time_created"]),
                     file_size=0,
+                    cost=r["cost"] or 0.0,
+                    tokens_input=r["tokens_input"] or 0,
+                    tokens_output=r["tokens_output"] or 0,
+                    duration_s=(r["active_ms"] or 0) // 1000,
                 ))
             return result
         finally:
@@ -140,12 +158,22 @@ class OpencodeV1Source(SessionSource):
     def metadata(self, handle: Any, session_id: str) -> SessionMeta:
         conn = connect()
         try:
+            stats = stat_columns_sql(conn, "session")
             r = conn.execute(
-                "SELECT id, title, directory, agent, model, version, cost, "
-                "tokens_input, tokens_output, time_created, time_updated, "
+                "SELECT id, title, directory, agent, model, version, "
+                + stats + ", "
+                "time_created, time_updated, "
                 "(SELECT count(*) FROM part p WHERE p.session_id = s.id "
                 "  AND json_extract(p.data, '$.type') = 'compaction') AS compact_count, "
-                "(SELECT count(*) FROM part p WHERE p.session_id = s.id) AS part_count "
+                "(SELECT count(*) FROM part p WHERE p.session_id = s.id) AS part_count, "
+                "(SELECT coalesce(sum("
+                "    json_extract(m.data, '$.time.completed') - "
+                "    json_extract(m.data, '$.time.created')), 0) "
+                "  FROM message m WHERE m.session_id = s.id "
+                "  AND json_extract(m.data, '$.role') = 'assistant' "
+                "  AND json_extract(m.data, '$.time.completed') IS NOT NULL "
+                "  AND json_extract(m.data, '$.time.completed') >= "
+                "      json_extract(m.data, '$.time.created')) AS active_ms "
                 "FROM session s WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
@@ -173,7 +201,7 @@ class OpencodeV1Source(SessionSource):
                 cost=r["cost"] or 0.0,
                 tokens_input=r["tokens_input"] or 0,
                 tokens_output=r["tokens_output"] or 0,
-                duration_s=((r["time_updated"] or 0) - (r["time_created"] or 0)) // 1000,
+                duration_s=(r["active_ms"] or 0) // 1000,
                 agent=r["agent"] or "",
             )
         finally:

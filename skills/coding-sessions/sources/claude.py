@@ -157,6 +157,34 @@ def _is_real_user_prompt(obj: dict) -> bool:
     return False
 
 
+def _usage_from_lines(lines: list[dict]) -> tuple[int, int, int]:
+    """Return (input_tokens, output_tokens, active_ms) for a transcript.
+
+    Tokens are summed from ``message.usage`` on assistant lines. Input counts
+    every prompt token, including cache creation and cache read tokens, which
+    matches how the other sources count prompt tokens. Active time is the sum
+    of ``system/turn_duration`` events, which excludes idle gaps between user
+    turns. Older transcripts without those events report zero.
+    """
+    tokens_input = 0
+    tokens_output = 0
+    active_ms = 0
+    for obj in lines:
+        if obj.get("type") == "assistant":
+            msg = obj.get("message", {})
+            usage = msg.get("usage") if isinstance(msg, dict) else None
+            if isinstance(usage, dict):
+                tokens_input += (usage.get("input_tokens") or 0)
+                tokens_input += (usage.get("cache_creation_input_tokens") or 0)
+                tokens_input += (usage.get("cache_read_input_tokens") or 0)
+                tokens_output += usage.get("output_tokens") or 0
+        elif obj.get("type") == "system" and obj.get("subtype") == "turn_duration":
+            duration = obj.get("durationMs") or 0
+            if isinstance(duration, (int, float)) and duration > 0:
+                active_ms += int(duration)
+    return tokens_input, tokens_output, active_ms
+
+
 class ClaudeSource(SessionSource):
     name = "claude"
 
@@ -194,6 +222,9 @@ class ClaudeSource(SessionSource):
                     compacts=meta.compact_count,
                     last_ts=meta.last_ts,
                     file_size=f.stat().st_size,
+                    tokens_input=meta.tokens_input,
+                    tokens_output=meta.tokens_output,
+                    duration_s=meta.duration_s,
                 ))
         return rows
 
@@ -242,6 +273,7 @@ class ClaudeSource(SessionSource):
                 m = msg.get("model", "")
                 if m and not model:
                     model = m
+        tokens_input, tokens_output, active_ms = _usage_from_lines(lines)
         return SessionMeta(
             source="claude",
             session_id=session_id or f.stem,
@@ -255,6 +287,9 @@ class ClaudeSource(SessionSource):
             last_ts=last_ts,
             compact_count=compact_count,
             file_size=f.stat().st_size if f.is_file() else 0,
+            tokens_input=tokens_input,
+            tokens_output=tokens_output,
+            duration_s=active_ms // 1000,
         )
 
     def _prompts_from_lines(self, lines: list[dict]) -> list[Prompt]:

@@ -41,6 +41,36 @@ def decode_json(text) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    """Return the column names of a table; empty when it does not exist."""
+    try:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {row[1] for row in rows}
+
+
+def stat_columns_sql(conn: sqlite3.Connection, table: str) -> str:
+    """SQL fragment selecting cost, tokens_input and tokens_output.
+
+    Prompt tokens include cache reads and cache writes when those columns
+    exist, which matches how the other sources count prompt tokens. Older
+    schemas without the cache columns still work.
+    """
+    cols = table_columns(conn, table)
+    cost = "coalesce(s.cost, 0)" if "cost" in cols else "0.0"
+    input_parts = (["coalesce(s.tokens_input, 0)"]
+                   if "tokens_input" in cols else ["0"])
+    if "tokens_cache_read" in cols:
+        input_parts.append("coalesce(s.tokens_cache_read, 0)")
+    if "tokens_cache_write" in cols:
+        input_parts.append("coalesce(s.tokens_cache_write, 0)")
+    output = "coalesce(s.tokens_output, 0)" if "tokens_output" in cols else "0"
+    return (f"{cost} AS cost,\n"
+            f"       {' + '.join(input_parts)} AS tokens_input,\n"
+            f"       {output} AS tokens_output")
+
+
 def detect_schemas() -> list[str]:
     """Return the storage schemas present in the database, oldest first."""
     try:

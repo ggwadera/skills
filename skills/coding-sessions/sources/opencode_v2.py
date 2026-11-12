@@ -26,7 +26,7 @@ from .base import (
     TimelineEvent,
     ToolCall,
 )
-from .opencode_base import connect, decode_json, ms_to_iso
+from .opencode_base import connect, decode_json, ms_to_iso, stat_columns_sql
 
 _LIST_HEAD = """
 SELECT id, title, directory,
@@ -36,6 +36,16 @@ SELECT id, title, directory,
        {tool_count} AS tool_calls,
        (SELECT count(*) FROM session_message m WHERE m.session_id = s.id
           AND m.type = 'compaction') AS compacts,
+       {stats},
+       (SELECT coalesce(sum(
+            json_extract(m.data, '$.time.completed') -
+            json_extract(m.data, '$.time.created')), 0)
+          FROM session_message m
+         WHERE m.session_id = s.id
+           AND m.type = 'assistant'
+           AND json_extract(m.data, '$.time.completed') IS NOT NULL
+           AND json_extract(m.data, '$.time.completed') >=
+               json_extract(m.data, '$.time.created')) AS active_ms,
        time_created, time_updated
 FROM session_v2 s
 {where}
@@ -137,13 +147,16 @@ class OpencodeV2Source(SessionSource):
             tool_count = (_TOOL_COUNT_WITH_PARTS
                           if self._table_exists(conn, "session_part")
                           else _TOOL_COUNT_INLINE)
+            stats = stat_columns_sql(conn, "session_v2")
             if all_dirs or not dir_path:
                 rows = conn.execute(
-                    _LIST_HEAD.format(where="", tool_count=tool_count), (limit,)
+                    _LIST_HEAD.format(where="", tool_count=tool_count, stats=stats),
+                    (limit,),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    _LIST_HEAD.format(where="WHERE s.directory = ?", tool_count=tool_count),
+                    _LIST_HEAD.format(where="WHERE s.directory = ?",
+                                      tool_count=tool_count, stats=stats),
                     (dir_path, limit),
                 ).fetchall()
             result: list[SessionRow] = []
@@ -160,6 +173,10 @@ class OpencodeV2Source(SessionSource):
                     compacts=r["compacts"] or 0,
                     last_ts=ms_to_iso(r["time_updated"] or r["time_created"]),
                     file_size=0,
+                    cost=r["cost"] or 0.0,
+                    tokens_input=r["tokens_input"] or 0,
+                    tokens_output=r["tokens_output"] or 0,
+                    duration_s=(r["active_ms"] or 0) // 1000,
                 ))
             return result
         finally:
@@ -188,12 +205,22 @@ class OpencodeV2Source(SessionSource):
     def metadata(self, handle: Any, session_id: str) -> SessionMeta:
         conn = connect()
         try:
+            stats = stat_columns_sql(conn, "session_v2")
             r = conn.execute(
-                "SELECT id, title, directory, agent, model, version, cost, "
-                "tokens_input, tokens_output, time_created, time_updated, "
+                "SELECT id, title, directory, agent, model, version, "
+                + stats + ", "
+                "time_created, time_updated, "
                 "(SELECT count(*) FROM session_message m WHERE m.session_id = s.id "
                 "  AND m.type = 'compaction') AS compact_count, "
-                "(SELECT count(*) FROM session_message m WHERE m.session_id = s.id) AS msg_count "
+                "(SELECT count(*) FROM session_message m WHERE m.session_id = s.id) AS msg_count, "
+                "(SELECT coalesce(sum("
+                "    json_extract(m.data, '$.time.completed') - "
+                "    json_extract(m.data, '$.time.created')), 0) "
+                "  FROM session_message m WHERE m.session_id = s.id "
+                "  AND m.type = 'assistant' "
+                "  AND json_extract(m.data, '$.time.completed') IS NOT NULL "
+                "  AND json_extract(m.data, '$.time.completed') >= "
+                "      json_extract(m.data, '$.time.created')) AS active_ms "
                 "FROM session_v2 s WHERE s.id = ?",
                 (session_id,),
             ).fetchone()
@@ -221,7 +248,7 @@ class OpencodeV2Source(SessionSource):
                 cost=r["cost"] or 0.0,
                 tokens_input=r["tokens_input"] or 0,
                 tokens_output=r["tokens_output"] or 0,
-                duration_s=((r["time_updated"] or 0) - (r["time_created"] or 0)) // 1000,
+                duration_s=(r["active_ms"] or 0) // 1000,
                 agent=r["agent"] or "",
             )
         finally:

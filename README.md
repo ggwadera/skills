@@ -22,6 +22,7 @@ npx skills add ggwadera/skills --skill coding-sessions
 | Skill | Description |
 | ----- | ----------- |
 | [coding-sessions](skills/coding-sessions) | Inspect and continue from past Claude Code, Codex, and opencode session transcripts. |
+| [self-reflect](skills/self-reflect) | Analyse past sessions and improve instruction files, skills, and agent configuration. |
 
 ## Layout
 

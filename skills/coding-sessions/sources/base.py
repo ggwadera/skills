@@ -55,6 +55,10 @@ class SessionRow:
     compacts: int
     last_ts: str
     file_size: int = 0
+    cost: float = 0.0
+    tokens_input: int = 0
+    tokens_output: int = 0
+    duration_s: int = 0
 
 
 @dataclass

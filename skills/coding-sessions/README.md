@@ -15,6 +15,10 @@ session.
 - **One CLI, three sources.** Auto-detects which agent produced a session ID.
 - **Session discovery.** List sessions per directory or across all
   directories, with prompt and tool-call counts.
+- **Session stats.** `--stats` adds prompt and completion tokens, cost, and
+  active reply time. Active time sums per-turn model and tool work, so idle
+  gaps between user turns do not inflate it. Cost is reported for opencode
+  sessions only; Codex and Claude Code do not persist it.
 - **Text search.** Find sessions by ticket ID, feature name, or any text from
   a user prompt (`--grep` scans all sessions, not only the first page).
 - **Summaries.** Metadata, model, timestamps, cost, tokens, user prompts,
@@ -33,6 +37,28 @@ session.
 - Python 3.9 or newer.
 - No third-party packages.
 - macOS or Linux. The default paths follow the tools' own conventions.
+
+## Tests
+
+The suite builds synthetic Claude Code, Codex, and opencode data in a temporary
+directory and never reads real session files.
+
+```bash
+cd skills/coding-sessions
+python3 -m unittest discover -s tests
+```
+
+From the repository root:
+
+```bash
+python3 -m unittest discover -s skills/coding-sessions/tests
+```
+
+Run a single module:
+
+```bash
+python3 -m unittest discover -s tests -p test_codex.py
+```
 
 ## Install
 
@@ -79,6 +105,9 @@ No installation step is required. Run the script from its directory; the
 ```bash
 # List recent sessions from every source
 python3 session_extract.py list
+
+# List with token, cost, and active-time columns
+python3 session_extract.py list --stats --all --limit 20
 
 # List sessions for one source and directory
 python3 session_extract.py list --source opencode --dir /Users/me/myproject
