@@ -1,5 +1,7 @@
 # coding-sessions
 
+[![skills.sh](https://skills.sh/b/ggwadera/skills)](https://skills.sh/ggwadera/skills)
+
 Inspect and continue from past **Claude Code**, **Codex**, and **opencode**
 session transcripts.
 
@@ -35,6 +37,18 @@ session.
 ## Install
 
 This skill lives in the `skills` repository under `skills/coding-sessions`.
+
+### With the skills CLI
+
+Install through [skills.sh](https://skills.sh):
+
+```bash
+npx skills add ggwadera/skills --skill coding-sessions
+npx skills add ggwadera/skills -g --skill coding-sessions   # all projects
+```
+
+The CLI copies the skill into your agent's skills directory and lets you pick
+the agent to install it for.
 
 ### As an opencode skill
 

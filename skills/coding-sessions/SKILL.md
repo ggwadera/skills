@@ -1,6 +1,11 @@
 ---
 name: coding-sessions
 description: Inspect and continue from past Claude Code, Codex, and opencode session transcripts stored in ~/.claude/, ~/.codex/, and ~/.local/share/opencode/opencode.db. Use when the user asks to read, list, inspect, summarize, extract context from, or continue past sessions. Also use when the user mentions "claude code history", "codex history", "opencode history", "past sessions", "session transcript", or references a session ID.
+license: MIT
+compatibility: Requires Python 3.9 or newer and local session data from Claude Code, Codex, or opencode.
+metadata:
+  author: ggwadera
+  version: "1.0.0"
 ---
 
 # Coding Sessions
@@ -64,12 +69,21 @@ interface, and register it in `sources/__init__.py`.
 
 ## Helper script
 
-All session extraction is handled by `session_extract.py` in this skill's
-directory. Always use the script instead of parsing JSONL or the SQLite DB
+All session extraction is handled by `session_extract.py`, next to this
+`SKILL.md`. Always use the script instead of parsing JSONL or the SQLite DB
 manually — all formats have many event types and the script handles them all.
 
-```
+Run it from this skill's directory:
+
+```bash
+cd <skill-directory>
 python3 session_extract.py <command> [args]
+```
+
+Or pass its absolute path from any directory:
+
+```bash
+python3 <skill-directory>/session_extract.py <command> [args]
 ```
 
 The script requires Python 3.9 or newer and has no third-party dependencies.
